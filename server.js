@@ -7,7 +7,10 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
-// Örnek veriler
+function isAdmin(req) {
+  return req.headers["x-user-role"] === "admin";
+}
+
 let users = [
   {
     id: "1",
@@ -15,7 +18,17 @@ let users = [
     lastName: "Kabay",
     email: "arda@example.com",
     phone: "+905551112233",
-    password: "123456"
+    password: "123456",
+    role: "user"
+  },
+  {
+    id: "2",
+    firstName: "Admin",
+    lastName: "User",
+    email: "admin@cutify.com",
+    phone: "+905550000000",
+    password: "123456",
+    role: "admin"
   }
 ];
 
@@ -59,12 +72,11 @@ let appointments = [
   }
 ];
 
-// Test endpoint
 app.get("/v1", (req, res) => {
   res.send("Cutify API çalışıyor");
 });
 
-// 1. Giriş Yapma
+// 1. Giriş Yap
 app.post("/v1/auth/login", (req, res) => {
   const { email, password } = req.body;
 
@@ -84,7 +96,8 @@ app.post("/v1/auth/login", (req, res) => {
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
-      phone: user.phone
+      phone: user.phone,
+      role: user.role
     }
   });
 });
@@ -104,7 +117,8 @@ app.post("/v1/auth/register", (req, res) => {
     lastName,
     email,
     phone,
-    password
+    password,
+    role: "user"
   };
 
   users.push(newUser);
@@ -117,7 +131,15 @@ app.post("/v1/auth/register", (req, res) => {
 
 // 3. Berberleri Listeleme
 app.get("/v1/barbers", (req, res) => {
-  res.status(200).json(barbers);
+  const result = barbers.map((barber) => ({
+    id: barber.id,
+    name: barber.name,
+    location: barber.location,
+    phone: barber.phone,
+    availableSlots: barber.availableSlots
+  }));
+
+  res.status(200).json(result);
 });
 
 // 4. Berber Detay Görüntüleme
@@ -210,7 +232,8 @@ app.get("/v1/users/:userId", (req, res) => {
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
-      phone: user.phone
+      phone: user.phone,
+      role: user.role
     },
     appointments: userAppointments
   });
@@ -251,6 +274,10 @@ app.get("/v1/barbers/:barberId/services", (req, res) => {
 
 // 11. Randevu Durumunu Güncelleme (Admin)
 app.put("/v1/appointments/:appointmentId/status", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
+  }
+
   const appointment = appointments.find(
     (a) => a.id === req.params.appointmentId
   );
@@ -268,8 +295,12 @@ app.put("/v1/appointments/:appointmentId/status", (req, res) => {
   });
 });
 
-// 12. Berber Ekleme
+// 12. Berber Ekleme (Admin)
 app.post("/v1/barbers", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
+  }
+
   const { name, location, phone } = req.body;
 
   const newBarber = {
@@ -288,8 +319,12 @@ app.post("/v1/barbers", (req, res) => {
   });
 });
 
-// 13. Berber Güncelleme
+// 13. Berber Güncelleme (Admin)
 app.put("/v1/barbers/:barberId", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
+  }
+
   const barber = barbers.find((b) => b.id === req.params.barberId);
 
   if (!barber) {
@@ -308,8 +343,12 @@ app.put("/v1/barbers/:barberId", (req, res) => {
   });
 });
 
-// 14. Berber Silme
+// 14. Berber Silme (Admin)
 app.delete("/v1/barbers/:barberId", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
+  }
+
   const barberIndex = barbers.findIndex((b) => b.id === req.params.barberId);
 
   if (barberIndex === -1) {
