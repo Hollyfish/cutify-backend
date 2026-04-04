@@ -1,93 +1,118 @@
 const express = require("express");
 const cors = require("cors");
+const mysql = require("mysql2/promise");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+
+// MySQL Bağlantısı
+const db = mysql.createPool({
+  host: process.env.MYSQLHOST || "junction.proxy.rlwy.net",
+  port: process.env.MYSQLPORT || 51796,
+  user: process.env.MYSQLUSER || "root",
+  password: process.env.MYSQLPASSWORD || "eWBdmxtbkVTqasuGqJBsgZIryNclzmMB",
+  database: process.env.MYSQLDATABASE || "railway",
+  waitForConnections: true,
+  connectionLimit: 10,
+});
+
+// Tabloları oluştur (ilk çalıştırmada)
+async function initDB() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      firstName VARCHAR(50),
+      lastName VARCHAR(50),
+      email VARCHAR(100) UNIQUE,
+      phone VARCHAR(20),
+      password VARCHAR(100),
+      role VARCHAR(20) DEFAULT 'user'
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS barbers (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100),
+      location VARCHAR(100),
+      phone VARCHAR(20)
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS services (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      barberId INT,
+      name VARCHAR(100),
+      price INT,
+      FOREIGN KEY (barberId) REFERENCES barbers(id) ON DELETE CASCADE
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      userId INT,
+      barberId INT,
+      serviceId INT,
+      date VARCHAR(20),
+      time VARCHAR(10),
+      status VARCHAR(20) DEFAULT 'Aktif'
+    )
+  `);
+
+  // Başlangıç verileri
+  const [userRows] = await db.query("SELECT COUNT(*) as count FROM users");
+  if (userRows[0].count === 0) {
+    await db.query(`
+      INSERT INTO users (firstName, lastName, email, phone, password, role) VALUES
+      ('Arda', 'Kabay', 'arda@example.com', '+905551112233', '123456', 'user'),
+      ('Admin', 'User', 'admin@cutify.com', '+905550000000', '123456', 'admin')
+    `);
+  }
+
+  const [barberRows] = await db.query("SELECT COUNT(*) as count FROM barbers");
+  if (barberRows[0].count === 0) {
+    await db.query(`
+      INSERT INTO barbers (name, location, phone) VALUES
+      ('Berber Ahmet', 'Isparta Merkez', '+905551234567'),
+      ('Berber Mehmet', 'Isparta Çünür', '+905559876543')
+    `);
+    await db.query(`
+      INSERT INTO services (barberId, name, price) VALUES
+      (1, 'Saç Kesimi', 200),
+      (1, 'Sakal Tıraşı', 100),
+      (2, 'Saç Kesimi', 180),
+      (2, 'Yıkama', 80)
+    `);
+  }
+
+  console.log("Veritabanı hazır!");
+}
 
 function isAdmin(req) {
   return req.headers["x-user-role"] === "admin";
 }
 
-let users = [
-  {
-    id: "1",
-    firstName: "Arda",
-    lastName: "Kabay",
-    email: "arda@example.com",
-    phone: "+905551112233",
-    password: "123456",
-    role: "user"
-  },
-  {
-    id: "2",
-    firstName: "Admin",
-    lastName: "User",
-    email: "admin@cutify.com",
-    phone: "+905550000000",
-    password: "123456",
-    role: "admin"
-  }
-];
-
-let barbers = [
-  {
-    id: "1",
-    name: "Berber Ahmet",
-    location: "Isparta Merkez",
-    phone: "+905551234567",
-    availableSlots: ["2026-04-04 10:00", "2026-04-04 11:00"]
-  },
-  {
-    id: "2",
-    name: "Berber Mehmet",
-    location: "Isparta Çünür",
-    phone: "+905559876543",
-    availableSlots: ["2026-04-04 13:00", "2026-04-04 15:00"]
-  }
-];
-
-let barberServices = {
-  "1": [
-    { id: "1", name: "Saç Kesimi", price: 200 },
-    { id: "2", name: "Sakal Tıraşı", price: 100 }
-  ],
-  "2": [
-    { id: "3", name: "Saç Kesimi", price: 180 },
-    { id: "4", name: "Yıkama", price: 80 }
-  ]
-};
-
-let appointments = [
-  {
-    id: "1",
-    userId: "1",
-    barberId: "1",
-    serviceId: "1",
-    date: "2026-04-05",
-    time: "14:00",
-    status: "Aktif"
-  }
-];
-
+// API Sağlık Kontrolü
 app.get("/v1", (req, res) => {
   res.send("Cutify API çalışıyor");
 });
 
 // 1. Giriş Yap
-app.post("/v1/auth/login", (req, res) => {
+app.post("/v1/auth/login", async (req, res) => {
   const { email, password } = req.body;
-
-  const user = users.find(
-    (u) => u.email === email && u.password === password
+  const [rows] = await db.query(
+    "SELECT * FROM users WHERE email = ? AND password = ?",
+    [email, password]
   );
-
-  if (!user) {
+  if (rows.length === 0) {
     return res.status(401).json({ message: "Email veya şifre hatalı" });
   }
-
+  const user = rows[0];
   res.status(200).json({
     message: "Giriş başarılı",
     token: "fake-jwt-token",
@@ -97,135 +122,89 @@ app.post("/v1/auth/login", (req, res) => {
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
-      role: user.role
-    }
+      role: user.role,
+    },
   });
 });
 
 // 2. Üye Olma
-app.post("/v1/auth/register", (req, res) => {
+app.post("/v1/auth/register", async (req, res) => {
   const { firstName, lastName, email, phone, password } = req.body;
-
-  const existingUser = users.find((u) => u.email === email);
-  if (existingUser) {
+  const [existing] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
+  if (existing.length > 0) {
     return res.status(400).json({ message: "Bu email zaten kayıtlı" });
   }
-
-  const newUser = {
-    id: String(users.length + 1),
-    firstName,
-    lastName,
-    email,
-    phone,
-    password,
-    role: "user"
-  };
-
-  users.push(newUser);
-
+  const [result] = await db.query(
+    "INSERT INTO users (firstName, lastName, email, phone, password, role) VALUES (?, ?, ?, ?, ?, 'user')",
+    [firstName, lastName, email, phone, password]
+  );
   res.status(201).json({
     message: "Kullanıcı oluşturuldu",
-    user: newUser
+    user: { id: result.insertId, firstName, lastName, email, phone, role: "user" },
   });
 });
 
 // 3. Berberleri Listeleme
-app.get("/v1/barbers", (req, res) => {
-  const result = barbers.map((barber) => ({
-    id: barber.id,
-    name: barber.name,
-    location: barber.location,
-    phone: barber.phone,
-    availableSlots: barber.availableSlots
-  }));
-
-  res.status(200).json(result);
+app.get("/v1/barbers", async (req, res) => {
+  const [barbers] = await db.query("SELECT * FROM barbers");
+  res.status(200).json(barbers);
 });
 
 // 4. Berber Detay Görüntüleme
-app.get("/v1/barbers/:barberId", (req, res) => {
-  const barber = barbers.find((b) => b.id === req.params.barberId);
-
-  if (!barber) {
+app.get("/v1/barbers/:barberId", async (req, res) => {
+  const [rows] = await db.query("SELECT * FROM barbers WHERE id = ?", [req.params.barberId]);
+  if (rows.length === 0) {
     return res.status(404).json({ message: "Berber bulunamadı" });
   }
-
-  res.status(200).json(barber);
+  res.status(200).json(rows[0]);
 });
 
 // 5. Randevu Oluşturma
-app.post("/v1/appointments", (req, res) => {
+app.post("/v1/appointments", async (req, res) => {
   const { userId, barberId, serviceId, date, time } = req.body;
-
-  const newAppointment = {
-    id: String(appointments.length + 1),
-    userId,
-    barberId,
-    serviceId,
-    date,
-    time,
-    status: "Aktif"
-  };
-
-  appointments.push(newAppointment);
-
+  const [result] = await db.query(
+    "INSERT INTO appointments (userId, barberId, serviceId, date, time, status) VALUES (?, ?, ?, ?, ?, 'Aktif')",
+    [userId, barberId, serviceId, date, time]
+  );
   res.status(201).json({
     message: "Randevu oluşturuldu",
-    appointment: newAppointment
+    appointment: { id: result.insertId, userId, barberId, serviceId, date, time, status: "Aktif" },
   });
 });
 
 // 6. Randevu Güncelleme
-app.put("/v1/appointments/:appointmentId", (req, res) => {
-  const appointment = appointments.find(
-    (a) => a.id === req.params.appointmentId
-  );
-
-  if (!appointment) {
+app.put("/v1/appointments/:appointmentId", async (req, res) => {
+  const { date, time, serviceId } = req.body;
+  const [existing] = await db.query("SELECT * FROM appointments WHERE id = ?", [req.params.appointmentId]);
+  if (existing.length === 0) {
     return res.status(404).json({ message: "Randevu bulunamadı" });
   }
-
-  const { date, time, serviceId } = req.body;
-
-  if (date) appointment.date = date;
-  if (time) appointment.time = time;
-  if (serviceId) appointment.serviceId = serviceId;
-
-  res.status(200).json({
-    message: "Randevu güncellendi",
-    appointment
-  });
+  await db.query(
+    "UPDATE appointments SET date = COALESCE(?, date), time = COALESCE(?, time), serviceId = COALESCE(?, serviceId) WHERE id = ?",
+    [date || null, time || null, serviceId || null, req.params.appointmentId]
+  );
+  const [updated] = await db.query("SELECT * FROM appointments WHERE id = ?", [req.params.appointmentId]);
+  res.status(200).json({ message: "Randevu güncellendi", appointment: updated[0] });
 });
 
 // 7. Randevu Silme
-app.delete("/v1/appointments/:appointmentId", (req, res) => {
-  const appointmentIndex = appointments.findIndex(
-    (a) => a.id === req.params.appointmentId
-  );
-
-  if (appointmentIndex === -1) {
+app.delete("/v1/appointments/:appointmentId", async (req, res) => {
+  const [existing] = await db.query("SELECT * FROM appointments WHERE id = ?", [req.params.appointmentId]);
+  if (existing.length === 0) {
     return res.status(404).json({ message: "Randevu bulunamadı" });
   }
-
-  const deletedAppointment = appointments[appointmentIndex];
-  appointments.splice(appointmentIndex, 1);
-
-  res.status(200).json({
-    message: "Randevu silindi",
-    appointment: deletedAppointment
-  });
+  await db.query("DELETE FROM appointments WHERE id = ?", [req.params.appointmentId]);
+  res.status(200).json({ message: "Randevu silindi", appointment: existing[0] });
 });
 
 // 8. Profil Görüntüleme
-app.get("/v1/users/:userId", (req, res) => {
-  const user = users.find((u) => u.id === req.params.userId);
-
-  if (!user) {
+app.get("/v1/users/:userId", async (req, res) => {
+  const [users] = await db.query("SELECT * FROM users WHERE id = ?", [req.params.userId]);
+  if (users.length === 0) {
     return res.status(404).json({ message: "Kullanıcı bulunamadı" });
   }
-
-  const userAppointments = appointments.filter((a) => a.userId === user.id);
-
+  const user = users[0];
+  const [appointments] = await db.query("SELECT * FROM appointments WHERE userId = ?", [user.id]);
   res.status(200).json({
     user: {
       id: user.id,
@@ -233,137 +212,103 @@ app.get("/v1/users/:userId", (req, res) => {
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
-      role: user.role
+      role: user.role,
     },
-    appointments: userAppointments
+    appointments,
   });
 });
 
 // 9. Profil Güncelleme
-app.put("/v1/users/:userId", (req, res) => {
-  const user = users.find((u) => u.id === req.params.userId);
-
-  if (!user) {
+app.put("/v1/users/:userId", async (req, res) => {
+  const [existing] = await db.query("SELECT * FROM users WHERE id = ?", [req.params.userId]);
+  if (existing.length === 0) {
     return res.status(404).json({ message: "Kullanıcı bulunamadı" });
   }
-
   const { firstName, lastName, email, phone, password } = req.body;
-
-  if (firstName) user.firstName = firstName;
-  if (lastName) user.lastName = lastName;
-  if (email) user.email = email;
-  if (phone) user.phone = phone;
-  if (password) user.password = password;
-
-  res.status(200).json({
-    message: "Profil güncellendi",
-    user
-  });
+  await db.query(
+    "UPDATE users SET firstName = COALESCE(?, firstName), lastName = COALESCE(?, lastName), email = COALESCE(?, email), phone = COALESCE(?, phone), password = COALESCE(?, password) WHERE id = ?",
+    [firstName || null, lastName || null, email || null, phone || null, password || null, req.params.userId]
+  );
+  const [updated] = await db.query("SELECT * FROM users WHERE id = ?", [req.params.userId]);
+  res.status(200).json({ message: "Profil güncellendi", user: updated[0] });
 });
 
 // 10. Berber Hizmetlerini Listeleme
-app.get("/v1/barbers/:barberId/services", (req, res) => {
-  const services = barberServices[req.params.barberId];
-
-  if (!services) {
+app.get("/v1/barbers/:barberId/services", async (req, res) => {
+  const [services] = await db.query("SELECT * FROM services WHERE barberId = ?", [req.params.barberId]);
+  if (services.length === 0) {
     return res.status(404).json({ message: "Hizmet bulunamadı" });
   }
-
   res.status(200).json(services);
 });
 
 // 11. Randevu Durumunu Güncelleme (Admin)
-app.put("/v1/appointments/:appointmentId/status", (req, res) => {
+app.put("/v1/appointments/:appointmentId/status", async (req, res) => {
   if (!isAdmin(req)) {
     return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
   }
-
-  const appointment = appointments.find(
-    (a) => a.id === req.params.appointmentId
-  );
-
-  if (!appointment) {
+  const [existing] = await db.query("SELECT * FROM appointments WHERE id = ?", [req.params.appointmentId]);
+  if (existing.length === 0) {
     return res.status(404).json({ message: "Randevu bulunamadı" });
   }
-
   const { status } = req.body;
-  appointment.status = status;
-
-  res.status(200).json({
-    message: "Randevu durumu güncellendi",
-    appointment
-  });
+  await db.query("UPDATE appointments SET status = ? WHERE id = ?", [status, req.params.appointmentId]);
+  const [updated] = await db.query("SELECT * FROM appointments WHERE id = ?", [req.params.appointmentId]);
+  res.status(200).json({ message: "Randevu durumu güncellendi", appointment: updated[0] });
 });
 
 // 12. Berber Ekleme (Admin)
-app.post("/v1/barbers", (req, res) => {
+app.post("/v1/barbers", async (req, res) => {
   if (!isAdmin(req)) {
     return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
   }
-
   const { name, location, phone } = req.body;
-
-  const newBarber = {
-    id: String(barbers.length + 1),
-    name,
-    location,
-    phone,
-    availableSlots: []
-  };
-
-  barbers.push(newBarber);
-
+  const [result] = await db.query(
+    "INSERT INTO barbers (name, location, phone) VALUES (?, ?, ?)",
+    [name, location, phone]
+  );
   res.status(201).json({
     message: "Berber eklendi",
-    barber: newBarber
+    barber: { id: result.insertId, name, location, phone },
   });
 });
 
 // 13. Berber Güncelleme (Admin)
-app.put("/v1/barbers/:barberId", (req, res) => {
+app.put("/v1/barbers/:barberId", async (req, res) => {
   if (!isAdmin(req)) {
     return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
   }
-
-  const barber = barbers.find((b) => b.id === req.params.barberId);
-
-  if (!barber) {
+  const [existing] = await db.query("SELECT * FROM barbers WHERE id = ?", [req.params.barberId]);
+  if (existing.length === 0) {
     return res.status(404).json({ message: "Berber bulunamadı" });
   }
-
   const { name, location, phone } = req.body;
-
-  if (name) barber.name = name;
-  if (location) barber.location = location;
-  if (phone) barber.phone = phone;
-
-  res.status(200).json({
-    message: "Berber güncellendi",
-    barber
-  });
+  await db.query(
+    "UPDATE barbers SET name = COALESCE(?, name), location = COALESCE(?, location), phone = COALESCE(?, phone) WHERE id = ?",
+    [name || null, location || null, phone || null, req.params.barberId]
+  );
+  const [updated] = await db.query("SELECT * FROM barbers WHERE id = ?", [req.params.barberId]);
+  res.status(200).json({ message: "Berber güncellendi", barber: updated[0] });
 });
 
 // 14. Berber Silme (Admin)
-app.delete("/v1/barbers/:barberId", (req, res) => {
+app.delete("/v1/barbers/:barberId", async (req, res) => {
   if (!isAdmin(req)) {
     return res.status(403).json({ message: "Bu işlem için admin yetkisi gerekli" });
   }
-
-  const barberIndex = barbers.findIndex((b) => b.id === req.params.barberId);
-
-  if (barberIndex === -1) {
+  const [existing] = await db.query("SELECT * FROM barbers WHERE id = ?", [req.params.barberId]);
+  if (existing.length === 0) {
     return res.status(404).json({ message: "Berber bulunamadı" });
   }
-
-  const deletedBarber = barbers[barberIndex];
-  barbers.splice(barberIndex, 1);
-
-  res.status(200).json({
-    message: "Berber silindi",
-    barber: deletedBarber
-  });
+  await db.query("DELETE FROM barbers WHERE id = ?", [req.params.barberId]);
+  res.status(200).json({ message: "Berber silindi", barber: existing[0] });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server ${PORT} portunda çalışıyor`);
+// Başlat
+initDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server ${PORT} portunda çalışıyor`);
+  });
+}).catch((err) => {
+  console.error("Veritabanı bağlantı hatası:", err);
 });
