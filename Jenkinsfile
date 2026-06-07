@@ -12,15 +12,15 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 echo 'Bağımlılıklar yükleniyor...'
-                bat 'npm install'
+                sh 'npm install'
             }
         }
 
         stage('Docker Build & Deploy') {
             steps {
                 echo 'Docker image oluşturuluyor...'
-                bat 'docker-compose down'
-                bat 'docker-compose up -d --build'
+                sh 'docker-compose down || true'
+                sh 'docker-compose up -d --build'
             }
         }
 
@@ -28,7 +28,7 @@ pipeline {
             steps {
                 echo 'API kontrol ediliyor...'
                 sleep(time: 15, unit: 'SECONDS')
-                bat 'curl -f http://localhost:3000/v1 || exit 1'
+                sh 'curl -f http://localhost:3000/v1 || exit 1'
             }
         }
     }
