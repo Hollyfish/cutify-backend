@@ -12,8 +12,11 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "amqplib": "^2.0.1",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "ioredis": "^5.11.1",
     "mysql2": "^3.20.0"
   }
 }

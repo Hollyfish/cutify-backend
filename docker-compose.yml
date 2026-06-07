@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: cutify_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    restart: always
+
+  redis:
+    image: redis:alpine
+    container_name: cutify_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  mysql:
+    image: mysql:8
+    container_name: cutify_db
+    environment:
+      MYSQL_ROOT_PASSWORD: password123
+      MYSQL_DATABASE: cutify_db
+    ports:
+      - "3306:3306"
+    restart: always
+    volumes:
+      - cutify_mysql_data:/var/lib/mysql
+
+  backend:
+    build: .
+    container_name: cutify_backend
+    ports:
+      - "3000:3000"
+    environment:
+      MYSQLHOST: mysql
+      MYSQLPORT: 3306
+      MYSQLUSER: root
+      MYSQLPASSWORD: password123
+      MYSQLDATABASE: cutify_db
+      REDISHOST: redis
+      REDISPORT: 6379
+      RABBITMQ_URL: amqp://rabbitmq
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    restart: always
+
+volumes:
+  cutify_mysql_data:
